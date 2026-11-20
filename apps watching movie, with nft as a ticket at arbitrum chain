@@ -1,0 +1,134 @@
+
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.24;
+
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+
+contract MoviePass is ERC721, Ownable, ReentrancyGuard {
+
+    uint256 public nextTokenId;
+    uint256 public movieCount;
+
+    struct Movie {
+        string title;
+        string metadataURI;
+        address payable creator;
+        uint256 price;
+        bool active;
+    }
+
+    mapping(uint256 => Movie) public movies;
+    mapping(uint256 => uint256) public ticketMovie;
+    mapping(uint256 => bool) public usedTicket;
+
+    event MovieAdded(uint256 movieId, string title);
+    event TicketPurchased(
+        address indexed buyer,
+        uint256 indexed tokenId,
+        uint256 movieId
+    );
+
+    constructor()
+        ERC721("MoviePass NFT", "MPASS")
+        Ownable(msg.sender)
+    {}
+
+    // Creator registers a movie
+    function addMovie(
+        string memory title,
+        string memory metadataURI,
+        uint256 price
+    ) external {
+
+        require(price > 0, "Invalid price");
+
+        movieCount++;
+
+        movies[movieCount] = Movie({
+            title: title,
+            metadataURI: metadataURI,
+            creator: payable(msg.sender),
+            price: price,
+            active: true
+        });
+
+        emit MovieAdded(movieCount, title);
+    }
+
+    // Buy movie ticket as NFT
+    function buyTicket(uint256 movieId)
+        external
+        payable
+        nonReentrant
+    {
+        Movie storage movie = movies[movieId];
+
+        require(movie.active, "Movie unavailable");
+        require(msg.value == movie.price, "Wrong payment");
+
+        uint256 tokenId = ++nextTokenId;
+
+        ticketMovie[tokenId] = movieId;
+
+        _safeMint(msg.sender, tokenId);
+
+        (bool success, ) = movie.creator.call{value: msg.value}("");
+        require(success, "Payment failed");
+
+        emit TicketPurchased(msg.sender, tokenId, movieId);
+    }
+
+    // Check movie access
+    function canWatch(
+        address user,
+        uint256 movieId
+    ) public view returns (bool) {
+
+        uint256 balance = balanceOf(user);
+
+        for (uint256 i = 1; i <= nextTokenId; i++) {
+            if (
+                ticketMovie[i] == movieId &&
+                ownerOf(i) == user &&
+                !usedTicket[i]
+            ) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // Redeem ticket
+    function redeemTicket(uint256 tokenId) external {
+        require(ownerOf(tokenId) == msg.sender, "Not ticket owner");
+        require(!usedTicket[tokenId], "Already redeemed");
+
+        usedTicket[tokenId] = true;
+    }
+
+    // Creator can deactivate movie
+    function setMovieStatus(
+        uint256 movieId,
+        bool status
+    ) external {
+        require(
+            movies[movieId].creator == msg.sender ||
+            owner() == msg.sender,
+            "Not authorized"
+        );
+
+        movies[movieId].active = status;
+    }
+
+    // Movie metadata
+    function getMovie(uint256 movieId)
+        external
+        view
+        returns (Movie memory)
+    {
+        return movies[movieId];
+    }
+}
